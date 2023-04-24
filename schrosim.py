@@ -35,14 +35,23 @@ class SchroSim:
 
         # get partial derivative in each spacial direction
         d_dx = cp.empty(shape=self.coor.shape, dtype=phi.dtype)
-        d_dx[0] = cp.diff(cp.pad(phi, ((1,0),(0,0),(0,0)), 'edge'), axis=0)
-        d_dx[1] = cp.diff(cp.pad(phi, ((0,0),(1,0),(0,0)), 'edge'), axis=1)
-        d_dx[2] = cp.diff(cp.pad(phi, ((0,0),(0,0),(1,0)), 'edge'), axis=2)
+        d_dx[0] = cp.diff(phi, axis=0, prepend=0) * (-1j * self.h)
+        d_dx[1] = cp.diff(phi, axis=1, prepend=0) * (-1j * self.h)
+        d_dx[2] = cp.diff(phi, axis=2, prepend=0) * (-1j * self.h)
 
-        # calculate the derivative with repect to time 
-        mo_op = (-1j * self.h * d_dx) - ((self.qe/self.c) * self.e_field(phi))
-        return (-1j / (self.h * 2 * self.me)) * cp.sqrt(cp.sum(cp.square(mo_op), axis=0)) + (self.V * phi)
-    
+        self.e_field(phi)
+
+        d_A = cp.diff(self.ef[0], axis=0, prepend=0) / self.dau
+        d_A += (cp.diff(self.ef[1], axis=1, prepend=0) / self.dau)
+        d_A += (cp.diff(self.ef[2], axis=2, prepend=0) / self.dau)
+
+        mo_op = (cp.sum(cp.square(d_dx), axis=0) / (2 * self.me))
+        mo_op += ((1j *self.h * self.qe) * d_A)
+        mo_op += (-(self.qe / (self.me * self.c)) * cp.sum(self.ef * d_dx, axis=0))
+        mo_op += ((self.qe**2 / (2 * self.me * self.c**2)) * cp.sum(cp.square(self.ef), axis=0))
+
+        return mo_op + (self.V * phi)
+       
 
     # Calculate the electric field vector potentials produced by the charged particles in the system
     def e_field(self, phi):
@@ -110,7 +119,10 @@ class SchroSim:
         self.protons = np.append(self.protons, np.array([pos, vel]))
             
     # Simulates the currently specified environment.
-    def simulate(self, dims, dau, steps=10000, save_rate=None, check_point=None, path=None, sim_name=None, frame_rate=None, imag_time=False):
+    def simulate(self, dims, dau, steps=10000, 
+                 save_rate=None, check_point=None, path=None, sim_name=None, 
+                 frame_rate=None, imag_time=False,
+                 batch_calc=True):
         """
         dims:   An int/float/tuple describing how large each spacial dimention is. If a single value is given then only 1 dimention is simulated
         dau:    step size in atomic units. Step size is applied to spacial and temporal steps
@@ -152,12 +164,15 @@ class SchroSim:
         self.dims = [d.get() for d in self.dims]
         cp._default_memory_pool.free_all_blocks()
 
+        if batch_calc:
+            nvidia_smi.nvmlInit()
+            handle = nvidia_smi.nvmlDeviceGetHandleByIndex(0)
+            info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+            batch_lim = info.free // (4 * self.coor.nbytes)
+            nvidia_smi.nvmlShutdown()
+        else:
+            batch_lim = phi.size
 
-        nvidia_smi.nvmlInit()
-        handle = nvidia_smi.nvmlDeviceGetHandleByIndex(0)
-        info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
-        batch_lim = info.free // (4 * self.coor.nbytes)
-        nvidia_smi.nvmlShutdown()
 
         self.sim_batches = [range(i, i+batch_lim) for i in range(0, phi.size-batch_lim, batch_lim)]
         self.sim_batches += [range(len(self.sim_batches)*batch_lim, phi.size)]
@@ -170,10 +185,9 @@ class SchroSim:
         simulation_frames = []
 
         if path:
+            path = f'{path}{sim_name}/'
             if not os.path.exists(path):
                 os.mkdir(path)
-                os.mkdir(f'{path}{sim_name}')
-            path = f'{path}{sim_name}/'
 
         simulation_steps_phi.append(phi.get())
         simulation_steps_ef.append(self.ef.get())
@@ -183,25 +197,25 @@ class SchroSim:
 
         # Save the initial state and iterate through time steps
         for i in range(1, steps+1):
-            if i % save_rate == 0:
-                print(f'Step: {i}')
+            if (save_rate is not None) and (i % save_rate == 0):
                 simulation_steps_phi.append(phi.get())
                 simulation_steps_ef.append(self.ef.get())
                 simulation_steps_protons.append(self.protons.get())
 
                 if i % check_point == 0:
-                    with open(f'{path}{sim_name}_phi', 'a') as f:
+                    with open(f'{path}{sim_name}_phi.npy', 'ab') as f:
                         np.save(f, np.stack(simulation_steps_phi, axis=0))
                     simulation_steps_phi = []
-                    with open(f'{path}{sim_name}_ef', 'a') as f:
+                    with open(f'{path}{sim_name}_ef.npy', 'ab') as f:
                         np.save(f, np.stack(simulation_steps_ef, axis=0))
                     simulation_steps_ef = []
-                    with open(f'{path}{sim_name}_proton', 'a') as f:
+                    with open(f'{path}{sim_name}_proton.npy', 'ab') as f:
                         np.save(f, np.stack(simulation_steps_protons, axis=0))
                     simulation_steps_protons = []
 
 
             if i % frame_rate == 0:
+                print(f'Step: {i}')
                 simulation_frames.append(phi.get())
 
             phi = self.norm(self.euler(phi))
@@ -264,31 +278,12 @@ class SchroSim:
         elif self.n_dim >= 3:
             raise Exception('Error: There is no animation method for 3d simulations at this time')
 
-        anim = FuncAnimation(fig, animate, frames=int(len(self.simulation_steps)), interval=interval)
+        anim = FuncAnimation(fig, animate, frames=int(len(frames)), interval=interval)
         return anim
     
 
     
 
-box_2d = lambda x: cp.where((cp.abs(x[0]) < 0.5) & (cp.abs(x[1]) < 0.5), 0, 1)
-proton_2d = lambda x: (-1 / cp.clip(cp.sqrt(cp.sum(cp.square(x), axis=0)), 1e-2)) 
-parab = lambda x: cp.sum((x)**2, axis=0)
 
-box_mask_2d = lambda x: cp.where((cp.abs(x[0]) < 0.5) & (cp.abs(x[1]) < 0.5), 1, 0)
-proton_mask_2d = lambda x: cp.where(cp.sqrt(cp.sum(cp.square(x), axis=0)) < 0.01, 0, 1)
-
-
-sim = SchroSim()
-sim.me = 10
-sim.add_potential(parab)
-sim.add_electron(pos=[0, 0], p=[0, 0])
-# sim.add_electron(pos=[-0.5, 0], p=[0, -10])
-
-anim = sim.simulate(dims=(1, 1), dau=1e-2, steps=5000, imag_time=False,
-                    save_rate=100, check_point=1000, path='./', sim_name='test',
-                    frame_rate=100)
-
-plt.show()
-plt.close()
 
 
