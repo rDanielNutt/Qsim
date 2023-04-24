@@ -1,0 +1,5 @@
+cudatoolkit==11.3
+cupy-cuda11x==11.4
+matplotlib==3.5
+nvidia-ml-py3==7
+numpy
