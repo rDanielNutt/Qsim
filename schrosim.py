@@ -1,6 +1,5 @@
 import numpy as np
 import cupy as cp
-from cupyx.scipy.signal import fftconvolve
 
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
@@ -17,46 +16,49 @@ class SchroSim:
     ep = 1 # vaccum permittivity 
     me = 1    # mass of electron in atomic mass units
     c = qe**2 / (ep * h * (1/137)) # speed of light
+    pw = 0.04
 
-    dims = (0,0,0)
+    dims = (0,0)
     ext_potential_funcs = []
 
     electrons = []
-    protons = np.empty(shape=[0, 2, 3])
+    protons = np.empty(shape=[0, 2, 2])
     V = np.empty([])
     ev = np.empty([])
 
     dau = 0
     dt = 0
     n_dim = 0
-    sim_batches = 1
 
-    kernel = cp.array([1, -2, 1])
 
     # Calculate the partial derivative of the wave function with respect to time
     def d_dt(self, phi):
         
         self.e_field(phi)
-        d_dxdx = cp.diff(phi, axis=1, n=2, prepend=0, append=0) / self.dau
-        d_dxdx += (cp.diff(phi, axis=2, n=2, prepend=0, append=0)  / self.dau)
+        d_dxdx = cp.diff(phi, axis=2, n=2, prepend=0, append=0) / self.dau
+        d_dxdx += (cp.diff(phi, axis=3, n=2, prepend=0, append=0)  / self.dau)
 
         return (d_dxdx * self.h * 1j / (2 * self.me)) + ((1j * self.qe * self.ev * phi) / self.h)
 
-    # Calculate the electric field vector potentials produced by the charged particles in the system
+    # Calculate the electric field potentials produced by the charged particles in the system
     def e_field(self, phi):
+
+        if self.protons.shape[0] > 0:
+            p_rad = cp.sqrt(cp.sum(cp.square(self.coor - self.protons[:,0].reshape([-1, 2, 1, 1])), axis=1, keepdims=True))
+            phi = cp.where(cp.min(p_rad, axis=0) <= self.pw, 0, phi)
+            pev = cp.nansum(self.qp / (4 * cp.pi * self.ep * p_rad), axis=0, keepdims=True)
+        else:
+            pev = 0
         
-        self.ev = cp.empty([0, *phi.shape[1:]])
-        positions = cp.empty([0, 3])
-        for el in self.phi:
-            pos = self.coor.reshape([3, -1])[:,cp.random.choice(el.size, p=el.reshape([-1]))]
+        positions = cp.empty([0, 2])
+        for el in phi:
+            pos = self.coor.reshape([2, -1]).T[cp.random.choice(el.size, size=1, p=(cp.abs(el.reshape([-1])) / cp.sum(cp.abs(el))) )]
             positions = cp.append(positions, pos, axis=0)
 
-        self.ev = self.qe / (cp.pi * 4 * self.ep * cp.sqrt(cp.sum(cp.square(self.coor - positions.reshape([-1,3,1,1,1]), axis=1))))
-        pev = self.qp / (cp.pi * 4 * self.ep * cp.sqrt(cp.sum(cp.square(self.coor - self.protons[:,0].reshape([-1,3,1,1,1])), axis=1)))
-        pev = cp.sum(pev, axis=0, keepdims=True)
+        self.ev = self.qe / (cp.pi * 4 * self.ep * cp.sqrt(cp.sum(cp.square(self.coor - positions.reshape([-1,2,1,1])), axis=1, keepdims=True)))
+        self.ev = cp.where(cp.isfinite(self.ev), self.ev, 0)
 
-        self.ev = (cp.sum(self.ev, axis=0, keepdims=True) - self.ev)
-        self.ev += pev
+        self.ev = (cp.sum(self.ev, axis=0, keepdims=True) - self.ev) + pev
 
 
     # Calculates the integral over time using the Rk4 method
@@ -87,26 +89,31 @@ class SchroSim:
 
     # Normalize the wave function 
     def norm(self, phi):
-        phi = cp.where((cp.abs(self.coor[1]) <= 0.04) & (cp.abs(self.coor[2]) <= 0.04), 0, phi)
-        norm = cp.sum(cp.square(cp.abs(phi))) * self.dau
+        if self.protons.shape[0] > 0:
+            p_rad = cp.sqrt(cp.sum(cp.square(self.coor - self.protons.reshape([-1, 2, 1, 1])), axis=1, keepdims=True))
+            phi = cp.where(cp.min(p_rad, axis=0) <= self.pw, 0, phi)
+
+        norm = cp.nansum(cp.square(cp.abs(phi)), axis=(1,2,3), keepdims=True) * self.dau
         return phi / cp.sqrt(norm)
     
     # convienance function for adding an electron to the environment
-    def add_electron(self, p=[0.0, 0.0, 0.0], pos=[0.0, 0.0, 0.0], sig=0.1):
-        pos = cp.array(pos + [0]*(3-len(pos))).reshape([3, 1, 1, 1])
-        p = cp.array(p + [0]*(3-len(p))).reshape([3, 1, 1, 1])
+    def add_electron(self, p=[0.0, 0.0], pos=[0.0, 0.0], sig=0.1):
+        pos = cp.array(pos + [0]*(2-len(pos))).reshape([2, 1, 1])
+        p = cp.array(p + [0]*(2-len(p))).reshape([2, 1, 1])
 
-        self.electrons.append(lambda x: cp.exp(1j * cp.sum(x * p, axis=0) - (cp.sum(cp.square(x - pos), axis=0) / sig**2)))
+        self.electrons.append(lambda x: cp.exp(1j * cp.sum(x[0] * p, axis=0, keepdims=True) - (cp.sum(cp.square(x[0] - pos), axis=0, keepdims=True) / sig**2)))
 
     # convienance function for adding a point like proton to the environment 
-    def add_proton(self, vel=[0.0, 0.0, 0.0], pos=[0.0, 0.0, 0.0]):
+    def add_proton(self, vel=[0.0, 0.0], pos=[0.0, 0.0]):
         self.protons = np.append(self.protons, np.array([[pos, vel]]), axis=0)
             
     # Simulates the currently specified environment.
-    def simulate(self, dims, dau, steps=10000, 
-                 save_rate=None, check_point=None, path=None, sim_name=None, 
-                 frame_rate=None, imag_time=False,
-                 batch_calc=True):
+    def simulate(
+            self, 
+            dims, dau, steps=10000, time_arrow=1,
+            save_rate=None, check_point=None, path=None, sim_name=None, 
+            frame_rate=None,
+        ):
         """
         dims:   An int/float/tuple describing how large each spacial dimention is. If a single value is given then only 1 dimention is simulated
         dau:    step size in atomic units. Step size is applied to spacial and temporal steps
@@ -121,51 +128,38 @@ class SchroSim:
         if isinstance(dims, (int, float)):
             dims = (dims, )
 
-        if imag_time:
-            self.dt = dau * 1j
-        else:
-            self.dt = dau
+        self.dt = dau * time_arrow
 
         self.n_dim = len(dims)
+        if self.n_dim >= 3:
+            raise Exception('Error: 3D simulations are not currently supported')
 
         # set the dimentions of the environment matrix and define coordinates
         self.dau = dau
-        self.dims = [cp.arange(-(dim/2), (dim/2), dau) for dim in dims] + [cp.array([0])]*(3 - len(dims))
+        self.dims = [cp.arange(-(dim/2), (dim/2), dau) for dim in dims] + [cp.array([0])]*(2 - len(dims))
         self.coor = cp.stack(cp.meshgrid(*self.dims, indexing='ij'), axis=0)[cp.newaxis]
+        
         self.protons = cp.array(self.protons)
-
+        
         # initialize environment with specified electron locations and momentums
-        phi = self.norm(cp.stack([el(self.coor) for el in self.electrons]), axis=0)
-
+        phi = self.norm(cp.stack([el(self.coor) for el in self.electrons], axis=0))
+        
         # create static potential matrix with specified lambda functions
         if len(self.ext_potential_funcs) > 0:
             self.V = cp.sum(cp.stack([v_func(self.coor) for v_func in self.ext_potential_funcs], axis=0), axis=0).astype(cp.float16)
         else:
-            self.V = cp.zeros(self.coor.shape[1:], dtype=cp.float16)
+            self.V = cp.zeros(self.coor.shape[2:], dtype=cp.float16)
 
 
         self.dims = [d.get() for d in self.dims]
         cp._default_memory_pool.free_all_blocks()
 
-        if batch_calc:
-            nvidia_smi.nvmlInit()
-            handle = nvidia_smi.nvmlDeviceGetHandleByIndex(0)
-            info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
-            batch_lim = info.free // (4 * self.coor.nbytes)
-            nvidia_smi.nvmlShutdown()
-        else:
-            batch_lim = phi.size // 16
-
-
-        self.sim_batches = [range(i, i+batch_lim) for i in range(0, phi.size-batch_lim, batch_lim)]
-        self.sim_batches += [range(len(self.sim_batches)*batch_lim, phi.size)]
-        
         self.e_field(phi)
 
         simulation_steps_phi = []
-        simulation_steps_ef = []
         simulation_steps_protons = []
         simulation_frames = []
+        simulation_frames_ev = []
 
         if path:
             path = f'{path}{sim_name}/'
@@ -175,7 +169,8 @@ class SchroSim:
         simulation_steps_phi.append(cp.sum(phi, axis=0).get())
         simulation_steps_protons.append(self.protons.get())
 
-        simulation_frames.append(phi.get())
+        simulation_frames.append(cp.sum(phi, axis=0).get())
+        simulation_frames_ev.append(cp.sum(self.ev, axis=0).get())
 
         # Save the initial state and iterate through time steps
         for i in range(1, steps+1):
@@ -197,7 +192,8 @@ class SchroSim:
 
             if i % frame_rate == 0:
                 print(f'Step: {i}')
-                simulation_frames.append(phi.get())
+                simulation_frames.append(cp.sum(phi, axis=0).get())
+                simulation_frames_ev.append(cp.sum(self.ev, axis=0).get())
 
             phi = self.norm(self.rk4(phi))
             
@@ -205,39 +201,41 @@ class SchroSim:
         self.V = self.V.get()
         self.coor = self.coor.get()
         self.protons = self.protons.get()
+        self.ev = self.ev.get()
         cp._default_memory_pool.free_all_blocks()  
 
         if len(simulation_frames) > 1:
-            return self.animate(simulation_frames)
+            return self.animate(simulation_frames, simulation_frames_ev)
         
     
     # Animates the saved time steps in 1 or 2 dimentions. 
     # 3D visualization isn't currently working.
-    def animate(self, frames, interval=1):
+    def animate(self, frames, potential, interval=1):
 
         fig = plt.figure(figsize=(8,8))
 
         if self.n_dim == 1:
             ax = fig.add_subplot()
-            x = np.squeeze(self.coor[0])
+            x = np.squeeze(self.coor[0][0])
 
             plot = [ax.plot(x, np.squeeze(np.real(frames[0])), label='real')[0],
                     ax.plot(x, np.squeeze(np.imag(frames[0])), label='imag')[0],
                     ax.plot(x, np.squeeze(np.abs(frames[0])), label='P')[0],
-                    ax.plot(x, np.squeeze(self.V))[0]]
+                    ax.plot(x, np.squeeze(potential[0]))[0]]
             
             def animate(frame):
                 plot[0].set_data((x, np.squeeze(np.real(frames[frame]))))
                 plot[1].set_data((x, np.squeeze(np.imag(frames[frame]))))
                 plot[2].set_data((x, np.squeeze(np.abs(frames[frame]))))
+                plot[3].set_data((x, np.squeeze(potential[frame])))
                 
                 return plot
 
             ax.set_ylim(-3, 3)
 
         elif self.n_dim == 2:
-            x = np.squeeze(self.coor[0])
-            y = np.squeeze(self.coor[1])
+            x = np.squeeze(self.coor[0][0])
+            y = np.squeeze(self.coor[0][1])
 
             ax = fig.add_subplot(111, projection='3d')
 
@@ -253,7 +251,7 @@ class SchroSim:
             plot = [ax.plot_surface(x, y, Z=processed_frames[0][0], cmap='magma', rcount=10, ccount=10, vmin=-0.005, vmax=0.005),
                     ax.plot_surface(x, y, Z=processed_frames[0][1], cmap='jet', rcount=10, ccount=10, vmin=-0.505, vmax=-0.495),
                     ax.plot_surface(x, y, Z=processed_frames[0][2], cmap='plasma', rcount=10, ccount=10),
-                    ax.plot_surface(x, y, np.squeeze(self.V)-1.5, cmap='gray', alpha=0.4, rcount=5, ccount=5)]
+                    ax.plot_surface(x, y, np.squeeze(np.sum(self.ev, axis=0))*-1, cmap='gray', alpha=0.4, rcount=10, ccount=10)]
 
             def animate(frame):
                 plot[0].remove()
