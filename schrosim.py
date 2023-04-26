@@ -1,5 +1,6 @@
 import numpy as np
 import cupy as cp
+from cupyx.scipy.signal import fftconvolve
 
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
@@ -21,58 +22,74 @@ class SchroSim:
     ext_potential_funcs = []
 
     electrons = []
-    protons = np.empty([])
+    protons = np.empty(shape=[0, 2, 3])
     V = np.empty([])
     ef = np.empty([])
+    ev = np.empty([])
 
     dau = 0
     dt = 0
     n_dim = 0
     sim_batches = 1
 
+    kernel = cp.array([1, -2, 1])
+
     # Calculate the partial derivative of the wave function with respect to time
     def d_dt(self, phi):
 
-        # get partial derivative in each spacial direction
+         # get partial derivative in each spacial direction
         d_dx = cp.empty(shape=self.coor.shape, dtype=phi.dtype)
-        d_dx[0] = cp.diff(phi, axis=0, prepend=0) * (-1j * self.h)
-        d_dx[1] = cp.diff(phi, axis=1, prepend=0) * (-1j * self.h)
-        d_dx[2] = cp.diff(phi, axis=2, prepend=0) * (-1j * self.h)
+        d_dx[0] = cp.diff(phi, axis=0, prepend=0) / self.dau
+        d_dx[1] = cp.diff(phi, axis=1, prepend=0) / self.dau
+        d_dx[2] = cp.diff(phi, axis=2, prepend=0) / self.dau
 
-        self.e_field(phi)
+        # d_dxdx = cp.diff(d_dx[0], axis=0, prepend=0) / self.dau
+        # d_dxdx += cp.diff(d_dx[1], axis=1, prepend=0) / self.dau
+        # d_dxdx += cp.diff(d_dx[2], axis=2, prepend=0) / self.dau
 
-        d_A = cp.diff(self.ef[0], axis=0, prepend=0) / self.dau
-        d_A += (cp.diff(self.ef[1], axis=1, prepend=0) / self.dau)
-        d_A += (cp.diff(self.ef[2], axis=2, prepend=0) / self.dau)
+        # d_dxdx = cp.pad(fftconvolve(phi, self.kernel.reshape([3, 1, 1]), mode='valid'), ((1,1),(0,0),(0,0)), 'constant', constant_values=0) / self.dau
+        # d_dxdx = (cp.pad(fftconvolve(phi, self.kernel.reshape([1, 3, 1]), mode='valid'), ((0,0),(1,1),(0,0)), 'constant', constant_values=0) / self.dau)
 
-        mo_op = (cp.sum(cp.square(d_dx), axis=0) / (2 * self.me))
-        mo_op += ((1j *self.h * self.qe) * d_A)
-        mo_op += (-(self.qe / (self.me * self.c)) * cp.sum(self.ef * d_dx, axis=0))
-        mo_op += ((self.qe**2 / (2 * self.me * self.c**2)) * cp.sum(cp.square(self.ef), axis=0))
+        d_dxdx = cp.diff(phi, axis=0, n=2, prepend=0, append=0) / self.dau
+        d_dxdx += (cp.diff(phi, axis=1, n=2, prepend=0, append=0)  / self.dau)
 
-        return mo_op + (self.V * phi)
-       
+        # self.e_field(phi)
+        # A = (self.ef / self.me) * self.dt
+
+        # d_A = cp.diff(A[0], axis=0, prepend=0) / self.dau
+        # d_A += (cp.diff(A[1], axis=1, prepend=0) / self.dau)
+        # d_A += (cp.diff(A[2], axis=2, prepend=0) / self.dau)
+
+        # mo_op = (1j * self.h * d_dxdx) + (self.qe * d_A) - ((self.qe / self.c) * cp.sum(A * d_dx, axis=0))
+        # mo_op += ((-1j * self.qe**2 / self.c**2) * cp.sum(A * A, axis=0))
+
+        # return (mo_op  / (2 * self.me)) + (1j  * self.qe * self.ev / self.h) + (1j * self.V * phi  / self.h)
+        return (d_dxdx * self.h * 1j / (2 * self.me)) + ((1j * self.V * phi) / self.h)
 
     # Calculate the electric field vector potentials produced by the charged particles in the system
     def e_field(self, phi):
         self.ef = cp.zeros(shape=self.coor.shape)
+        self.ev = cp.zeros(shape=phi.shape)
 
         # if point charge protons are in the simulation calculate their electric field here
         if self.protons.size > 1:
             pos = self.protons[:, 0].reshape([-1, 3, 1, 1, 1])
-            diffs = cp.indices(phi.shape)[cp.newaxis]*self.dau - pos
+            diffs = self.coor[cp.newaxis] - pos
 
-            self.ef += cp.nansum(self.qp / (4 * cp.pi * self.ep * cp.square(cp.nansum(cp.square(diffs), axis=1))) * diffs, axis=0)
+            r = cp.sqrt(cp.nansum(cp.square(diffs), axis=1, keepdims=True))
+            self.ef += cp.nansum(diffs * self.qp / (4 * cp.pi * self.ep * r**3), axis=0)
+            self.ev += cp.nansum(self.qp / (4 * cp.pi * self.ep * r), axis=(0, 1)) 
 
         # The sum of the weighted electric field vector potentials. 
         # The sum is done as iteration over batches of possible electron locations. This is done to avoid over allocating gpu memory
-        positions = cp.indices(phi.shape)[cp.newaxis] * self.dau
-        prob = np.abs(phi).reshape([-1, 1, 1, 1, 1])
-        for batch in self.sim_batches:
-            ph = cp.array(prob[batch])
-            pos = cp.array(positions.reshape([-1, 3, 1, 1, 1])[batch])
-            diff = positions - pos
-            self.ef += cp.nansum(diff * ph * len(self.electrons) * self.qe / (4 * cp.pi * self.ep * cp.square(cp.nansum(cp.square(diff), axis=1, keepdims=True))), axis=0)
+        if len(self.electrons) > 2:
+            for batch in self.sim_batches:
+                diff = self.coor[cp.newaxis] - self.coor.reshape([-1, 3, 1, 1, 1])[batch]
+                
+                r = cp.sqrt(cp.nansum(cp.square(diff), axis=1, keepdims=True))
+                self.ef += cp.nansum(diff * cp.abs(phi).reshape([-1,1,1,1,1])[batch] * (len(self.electrons) - 1)* self.qe / (4 * cp.pi * self.ep * r**3), axis=0)
+                self.ev += cp.nansum(cp.abs(phi).reshape([-1,1,1,1,1])[batch] * (len(self.electrons) - 1) * self.qe / (4 * cp.pi * self.ep * r), axis=(0, 1))
+
         return self.ef
     
 
@@ -104,6 +121,7 @@ class SchroSim:
 
     # Normalize the wave function 
     def norm(self, phi):
+        phi = cp.where((cp.abs(self.coor[0]) <= 0.04) & (cp.abs(self.coor[1]) <= 0.04), 0, phi)
         norm = cp.sum(cp.square(cp.abs(phi))) * self.dau
         return phi / cp.sqrt(norm)
     
@@ -116,7 +134,7 @@ class SchroSim:
 
     # convienance function for adding a point like proton to the environment 
     def add_proton(self, vel=[0.0, 0.0, 0.0], pos=[0.0, 0.0, 0.0]):
-        self.protons = np.append(self.protons, np.array([pos, vel]))
+        self.protons = np.append(self.protons, np.array([[pos, vel]]), axis=0)
             
     # Simulates the currently specified environment.
     def simulate(self, dims, dau, steps=10000, 
@@ -138,7 +156,7 @@ class SchroSim:
             dims = (dims, )
 
         if imag_time:
-            self.dt = dau * -1j
+            self.dt = dau * 1j
         else:
             self.dt = dau
 
@@ -159,8 +177,7 @@ class SchroSim:
         else:
             self.V = cp.zeros(self.coor.shape[1:], dtype=cp.float16)
 
-        # no advantage to keeping these in gpu memory, so they are brought back and unused memory is freed up
-        self.coor = self.coor.get()
+
         self.dims = [d.get() for d in self.dims]
         cp._default_memory_pool.free_all_blocks()
 
@@ -171,7 +188,7 @@ class SchroSim:
             batch_lim = info.free // (4 * self.coor.nbytes)
             nvidia_smi.nvmlShutdown()
         else:
-            batch_lim = phi.size
+            batch_lim = phi.size // 16
 
 
         self.sim_batches = [range(i, i+batch_lim) for i in range(0, phi.size-batch_lim, batch_lim)]
@@ -218,10 +235,11 @@ class SchroSim:
                 print(f'Step: {i}')
                 simulation_frames.append(phi.get())
 
-            phi = self.norm(self.euler(phi))
+            phi = self.norm(self.rk4(phi))
             
         # free up vram and return saved time steps
         self.V = self.V.get()
+        self.coor = self.coor.get()
         self.protons = self.protons.get()
         self.ef = self.ef.get()
         cp._default_memory_pool.free_all_blocks()  
@@ -259,19 +277,29 @@ class SchroSim:
             y = np.squeeze(self.coor[1])
 
             ax = fig.add_subplot(111, projection='3d')
-            plot = [ax.plot_surface(x, y, Z=np.squeeze(np.real(frames[0])), cmap='magma'),
-                    ax.plot_surface(x, y, Z=np.squeeze(np.imag(frames[0]))-0.5, cmap='jet'),
-                    ax.plot_surface(x, y, Z=np.squeeze(np.abs(frames[0]))+0.5, cmap='plasma'),
-                    ax.plot_surface(x, y, np.squeeze(self.V)-1.5, cmap='gray', alpha=0.4)]
+
+            processed_frames = []
+            for frame in frames:
+                f = [
+                    np.squeeze(np.real(frame)),
+                    np.squeeze(np.imag(frame))-0.5,
+                    np.squeeze(np.abs(frame))+0.5,
+                ]
+                processed_frames.append(f)
+
+            plot = [ax.plot_surface(x, y, Z=processed_frames[0][0], cmap='magma', rcount=10, ccount=10, vmin=-0.005, vmax=0.005),
+                    ax.plot_surface(x, y, Z=processed_frames[0][1], cmap='jet', rcount=10, ccount=10, vmin=-0.505, vmax=-0.495),
+                    ax.plot_surface(x, y, Z=processed_frames[0][2], cmap='plasma', rcount=10, ccount=10),
+                    ax.plot_surface(x, y, np.squeeze(self.V)-1.5, cmap='gray', alpha=0.4, rcount=5, ccount=5)]
 
             def animate(frame):
                 plot[0].remove()
                 plot[1].remove()
                 plot[2].remove()
 
-                plot[0] = ax.plot_surface(x, y, np.squeeze(np.real(frames[frame])), cmap='magma')
-                plot[1] = ax.plot_surface(x, y, np.squeeze(np.imag(frames[frame]))-0.5, cmap='jet')
-                plot[2] = ax.plot_surface(x, y, np.squeeze(np.abs(frames[frame]))+0.5, cmap='plasma')
+                plot[0] = ax.plot_surface(x, y, Z=processed_frames[frame][0], cmap='magma', rcount=10, ccount=10, vmin=-0.005, vmax=0.005)
+                plot[1] = ax.plot_surface(x, y, Z=processed_frames[frame][1], cmap='jet', rcount=10, ccount=10, vmin=-0.505, vmax=-0.495)
+                plot[2] = ax.plot_surface(x, y, Z=processed_frames[frame][2], cmap='plasma', rcount=10, ccount=10)
 
             ax.set_zlim(-1.25, 1.25)
         
