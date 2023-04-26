@@ -24,7 +24,6 @@ class SchroSim:
     electrons = []
     protons = np.empty(shape=[0, 2, 3])
     V = np.empty([])
-    ef = np.empty([])
     ev = np.empty([])
 
     dau = 0
@@ -36,62 +35,29 @@ class SchroSim:
 
     # Calculate the partial derivative of the wave function with respect to time
     def d_dt(self, phi):
+        
+        self.e_field(phi)
+        d_dxdx = cp.diff(phi, axis=1, n=2, prepend=0, append=0) / self.dau
+        d_dxdx += (cp.diff(phi, axis=2, n=2, prepend=0, append=0)  / self.dau)
 
-         # get partial derivative in each spacial direction
-        d_dx = cp.empty(shape=self.coor.shape, dtype=phi.dtype)
-        d_dx[0] = cp.diff(phi, axis=0, prepend=0) / self.dau
-        d_dx[1] = cp.diff(phi, axis=1, prepend=0) / self.dau
-        d_dx[2] = cp.diff(phi, axis=2, prepend=0) / self.dau
-
-        # d_dxdx = cp.diff(d_dx[0], axis=0, prepend=0) / self.dau
-        # d_dxdx += cp.diff(d_dx[1], axis=1, prepend=0) / self.dau
-        # d_dxdx += cp.diff(d_dx[2], axis=2, prepend=0) / self.dau
-
-        # d_dxdx = cp.pad(fftconvolve(phi, self.kernel.reshape([3, 1, 1]), mode='valid'), ((1,1),(0,0),(0,0)), 'constant', constant_values=0) / self.dau
-        # d_dxdx = (cp.pad(fftconvolve(phi, self.kernel.reshape([1, 3, 1]), mode='valid'), ((0,0),(1,1),(0,0)), 'constant', constant_values=0) / self.dau)
-
-        d_dxdx = cp.diff(phi, axis=0, n=2, prepend=0, append=0) / self.dau
-        d_dxdx += (cp.diff(phi, axis=1, n=2, prepend=0, append=0)  / self.dau)
-
-        # self.e_field(phi)
-        # A = (self.ef / self.me) * self.dt
-
-        # d_A = cp.diff(A[0], axis=0, prepend=0) / self.dau
-        # d_A += (cp.diff(A[1], axis=1, prepend=0) / self.dau)
-        # d_A += (cp.diff(A[2], axis=2, prepend=0) / self.dau)
-
-        # mo_op = (1j * self.h * d_dxdx) + (self.qe * d_A) - ((self.qe / self.c) * cp.sum(A * d_dx, axis=0))
-        # mo_op += ((-1j * self.qe**2 / self.c**2) * cp.sum(A * A, axis=0))
-
-        # return (mo_op  / (2 * self.me)) + (1j  * self.qe * self.ev / self.h) + (1j * self.V * phi  / self.h)
-        return (d_dxdx * self.h * 1j / (2 * self.me)) + ((1j * self.V * phi) / self.h)
+        return (d_dxdx * self.h * 1j / (2 * self.me)) + ((1j * self.qe * self.ev * phi) / self.h)
 
     # Calculate the electric field vector potentials produced by the charged particles in the system
     def e_field(self, phi):
-        self.ef = cp.zeros(shape=self.coor.shape)
-        self.ev = cp.zeros(shape=phi.shape)
+        
+        self.ev = cp.empty([0, *phi.shape[1:]])
+        positions = cp.empty([0, 3])
+        for el in self.phi:
+            pos = self.coor.reshape([3, -1])[:,cp.random.choice(el.size, p=el.reshape([-1]))]
+            positions = cp.append(positions, pos, axis=0)
 
-        # if point charge protons are in the simulation calculate their electric field here
-        if self.protons.size > 1:
-            pos = self.protons[:, 0].reshape([-1, 3, 1, 1, 1])
-            diffs = self.coor[cp.newaxis] - pos
+        self.ev = self.qe / (cp.pi * 4 * self.ep * cp.sqrt(cp.sum(cp.square(self.coor - positions.reshape([-1,3,1,1,1]), axis=1))))
+        pev = self.qp / (cp.pi * 4 * self.ep * cp.sqrt(cp.sum(cp.square(self.coor - self.protons[:,0].reshape([-1,3,1,1,1])), axis=1)))
+        pev = cp.sum(pev, axis=0, keepdims=True)
 
-            r = cp.sqrt(cp.nansum(cp.square(diffs), axis=1, keepdims=True))
-            self.ef += cp.nansum(diffs * self.qp / (4 * cp.pi * self.ep * r**3), axis=0)
-            self.ev += cp.nansum(self.qp / (4 * cp.pi * self.ep * r), axis=(0, 1)) 
+        self.ev = (cp.sum(self.ev, axis=0, keepdims=True) - self.ev)
+        self.ev += pev
 
-        # The sum of the weighted electric field vector potentials. 
-        # The sum is done as iteration over batches of possible electron locations. This is done to avoid over allocating gpu memory
-        if len(self.electrons) > 2:
-            for batch in self.sim_batches:
-                diff = self.coor[cp.newaxis] - self.coor.reshape([-1, 3, 1, 1, 1])[batch]
-                
-                r = cp.sqrt(cp.nansum(cp.square(diff), axis=1, keepdims=True))
-                self.ef += cp.nansum(diff * cp.abs(phi).reshape([-1,1,1,1,1])[batch] * (len(self.electrons) - 1)* self.qe / (4 * cp.pi * self.ep * r**3), axis=0)
-                self.ev += cp.nansum(cp.abs(phi).reshape([-1,1,1,1,1])[batch] * (len(self.electrons) - 1) * self.qe / (4 * cp.pi * self.ep * r), axis=(0, 1))
-
-        return self.ef
-    
 
     # Calculates the integral over time using the Rk4 method
     def rk4(self, phi, **kwargs):
@@ -121,7 +87,7 @@ class SchroSim:
 
     # Normalize the wave function 
     def norm(self, phi):
-        phi = cp.where((cp.abs(self.coor[0]) <= 0.04) & (cp.abs(self.coor[1]) <= 0.04), 0, phi)
+        phi = cp.where((cp.abs(self.coor[1]) <= 0.04) & (cp.abs(self.coor[2]) <= 0.04), 0, phi)
         norm = cp.sum(cp.square(cp.abs(phi))) * self.dau
         return phi / cp.sqrt(norm)
     
@@ -165,11 +131,11 @@ class SchroSim:
         # set the dimentions of the environment matrix and define coordinates
         self.dau = dau
         self.dims = [cp.arange(-(dim/2), (dim/2), dau) for dim in dims] + [cp.array([0])]*(3 - len(dims))
-        self.coor = cp.stack(cp.meshgrid(*self.dims, indexing='ij'), axis=0)
+        self.coor = cp.stack(cp.meshgrid(*self.dims, indexing='ij'), axis=0)[cp.newaxis]
         self.protons = cp.array(self.protons)
 
         # initialize environment with specified electron locations and momentums
-        phi = self.norm(cp.sum(cp.stack([el(self.coor) for el in self.electrons]), axis=0))
+        phi = self.norm(cp.stack([el(self.coor) for el in self.electrons]), axis=0)
 
         # create static potential matrix with specified lambda functions
         if len(self.ext_potential_funcs) > 0:
@@ -206,8 +172,7 @@ class SchroSim:
             if not os.path.exists(path):
                 os.mkdir(path)
 
-        simulation_steps_phi.append(phi.get())
-        simulation_steps_ef.append(self.ef.get())
+        simulation_steps_phi.append(cp.sum(phi, axis=0).get())
         simulation_steps_protons.append(self.protons.get())
 
         simulation_frames.append(phi.get())
@@ -215,8 +180,7 @@ class SchroSim:
         # Save the initial state and iterate through time steps
         for i in range(1, steps+1):
             if (save_rate is not None) and (i % save_rate == 0):
-                simulation_steps_phi.append(phi.get())
-                simulation_steps_ef.append(self.ef.get())
+                simulation_steps_phi.append(cp.sum(phi, axis=0).get())
                 simulation_steps_protons.append(self.protons.get())
 
                 if i % check_point == 0:
@@ -241,7 +205,6 @@ class SchroSim:
         self.V = self.V.get()
         self.coor = self.coor.get()
         self.protons = self.protons.get()
-        self.ef = self.ef.get()
         cp._default_memory_pool.free_all_blocks()  
 
         if len(simulation_frames) > 1:
