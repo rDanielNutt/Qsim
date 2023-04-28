@@ -100,8 +100,8 @@ class SchroSim:
     
     # convienance function for adding an electron to the environment
     def add_electron(self, p=[0.0, 0.0], pos=[0.0, 0.0], sig=0.1):
-        pos = cp.array(pos + [0]*(2-len(pos))).reshape([2, 1, 1])
-        p = cp.array(p + [0]*(2-len(p))).reshape([2, 1, 1])
+        pos = cp.array(pos).reshape([2, 1, 1])
+        p = cp.array(p).reshape([2, 1, 1])
 
         self.electrons.append(lambda x: cp.exp(1j * cp.sum(x[0] * p, axis=0, keepdims=True) - (cp.sum(cp.square(x[0] - pos), axis=0, keepdims=True) / sig**2)))
 
