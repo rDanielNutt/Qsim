@@ -1,3 +1,5 @@
 *.npy
 /__pycache__
 /simulations
+/models
+train_model.py

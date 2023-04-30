@@ -1,11 +1,11 @@
 import numpy as np
 import cupy as cp
+from npy_append_array import NpyAppendArray as npy
 
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
 import os
-import nvidia_smi
 
 
 class SchroSim:
@@ -41,7 +41,7 @@ class SchroSim:
         d_dxdx = cp.diff(phi, axis=2, n=2, prepend=0, append=0) / self.dau
         d_dxdx += (cp.diff(phi, axis=3, n=2, prepend=0, append=0)  / self.dau)
 
-        return (d_dxdx * self.h * 1j / (2 * self.me)) + ((1j * self.qe * self.ev * phi) / self.h) + ((1j * phi * self.V) / self.h)
+        return (d_dxdx * self.h * 1j / (2 * self.me)) + ((1j * self.qe * (self.ev + self.pev) * phi) / self.h) + ((1j * phi * self.V) / self.h)
 
     # Calculate the electric field potentials produced by the charged particles in the system
     def e_field(self, phi):
@@ -61,7 +61,7 @@ class SchroSim:
         self.ev = self.qe / (self.ep * cp.sqrt(cp.sum(cp.square(self.coor - positions.reshape([-1,2,1,1])), axis=1, keepdims=True)))
         self.ev = cp.where(cp.isfinite(self.ev), self.ev, 0)
 
-        self.ev = (cp.sum(self.ev, axis=0, keepdims=True) - self.ev) + self.pev
+        self.ev = cp.sum(self.ev, axis=0, keepdims=True) - self.ev
 
 
     # Calculates the integral over time using the Rk4 method
@@ -113,8 +113,8 @@ class SchroSim:
     def simulate(
             self, 
             dims, dau, steps=10000, time_arrow=1,
-            save=False, check_point='', path='', sim_name='', 
-            frame_rate=None,
+            save=False, check_point=None, path=None, sim_name=None, 
+            frame_rate=False, overwrite_save=True
         ):
         """
         dims:   An int/float/tuple describing how large each spacial dimention is. If a single value is given then only 1 dimention is simulated
@@ -157,41 +157,52 @@ class SchroSim:
 
         self.e_field(phi)
 
-        simulation_steps_phi = []
-        simulation_steps_V = []
-
         self.simulation_frames = []
         self.simulation_frames_ev = []
+        
+        simulation_steps = np.empty([0, phi.shape[2], phi.shape[3], 3])
+        simulation_steps = np.append(
+            simulation_steps,
+            cp.stack([
+                cp.squeeze(cp.sum(phi, axis=0)),
+                cp.squeeze(cp.sum(self.ev, axis=0)),
+                cp.squeeze(self.pev + self.V)
+            ], axis=-1).get()[np.newaxis],
+            axis=0
+        )
 
-        if save:
-            path = f'{path}{sim_name}/'
+        if path is not None:
             if not os.path.exists(path):
                 os.mkdir(path)
+            with npy(f'{path}{sim_name}.npy', delete_if_exists=overwrite_save) as f:
+                f.append(simulation_steps)
+            simulation_steps = np.empty([0, phi.shape[2], phi.shape[3], 3])
 
-        simulation_steps_phi.append(cp.sum(phi, axis=0).get())
-        simulation_steps_V.append((self.V + self.pev).get())
-
-        self.simulation_frames.append(cp.sum(phi, axis=0).get())
-        self.simulation_frames_ev.append((cp.sum(self.ev, axis=0) + self.V + self.pev).get())
+        if frame_rate:
+            self.simulation_frames.append(cp.sum(phi, axis=0).get())
+            self.simulation_frames_ev.append((cp.sum(self.ev, axis=0) + self.V + self.pev).get())
 
 
-        # Save the initial state and iterate through time steps
         for i in range(1, steps+1):
             if save:
-                simulation_steps_phi.append(cp.sum(phi, axis=0).get())
-                simulation_steps_V.append((self.V + self.pev).get())
+                simulation_steps = np.append(
+                    simulation_steps,
+                    cp.stack([
+                        cp.squeeze(cp.sum(phi, axis=0)),
+                        cp.squeeze(cp.sum(self.ev, axis=0)),
+                        cp.squeeze(self.pev + self.V)
+                    ], axis=-1).get()[np.newaxis],
+                    axis=0
+                )
 
-                if (i % check_point == 0) or (i == steps):
-                    with open(f'{path}phi.npy', 'ab') as f:
-                        np.save(f, np.stack(simulation_steps_phi, axis=0))
-                    simulation_steps_phi = []
-                    with open(f'{path}V.npy', 'ab') as f:
-                        np.save(f, np.stack(simulation_steps_V, axis=0))
-                    simulation_steps_V = []
+                if check_point is not None and ((i % check_point == 0) or (i == steps)):
+                    with npy(f'{path}{sim_name}.npy') as f:
+                        f.append(simulation_steps)
+                    simulation_steps = np.empty([0, phi.shape[2], phi.shape[3], 3])
                     print(f'{sim_name} saved at checkpoint step: {i}')
 
 
-            if i % frame_rate == 0:
+            if frame_rate and (i % frame_rate == 0):
                 print(f'Step: {i}')
                 self.simulation_frames.append(cp.sum(phi, axis=0).get())
                 self.simulation_frames_ev.append((cp.sum(self.ev, axis=0) + self.V + self.pev).get())
