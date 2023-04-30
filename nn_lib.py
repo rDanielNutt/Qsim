@@ -66,7 +66,7 @@ loss_funcs = {
 
 class BaseConv2D:
     
-    def __init__(self, n_kernels, kernel_size, padding='valid', activation='sigmoid', input_size=(), lr=1e-2, **kwargs):
+    def __init__(self, n_kernels, kernel_size, padding='valid', activation='sigmoid', input_size=(), lr=1e-2, dtype=cp.float64, **kwargs):
         
         self.pad_type = padding
         self.activate = activation_funcs[activation]
@@ -85,8 +85,8 @@ class BaseConv2D:
         elif len(kernel_size) == 2:
             self.kernel_size = (*kernel_size, self.input_size[2])
 
-        self.weights = cp.random.rand(1, *self.kernel_size, self.n_kernels) / 1000
-        self.bias = cp.zeros([1, 1, 1, self.n_kernels])
+        self.weights = cp.random.rand(1, *self.kernel_size, self.n_kernels).astype(dtype) / 1000
+        self.bias = cp.zeros([1, 1, 1, self.n_kernels]).astype(dtype)
 
         if self.pad_type == 'same':
             pre0 = math.ceil((self.kernel_size[0] - 1) / 2)
@@ -137,10 +137,10 @@ class BaseFlatten:
 
 
 class BaseDense:
-    def __init__(self, n_neurons, input_size, lr, activation):
+    def __init__(self, n_neurons, input_size, lr, activation, dtype):
         
-        self.weights = cp.random.rand(input_size, n_neurons) / 10
-        self.bias = cp.zeros([1, n_neurons])
+        self.weights = cp.random.rand(input_size, n_neurons).astype(dtype) / 10
+        self.bias = cp.zeros([1, n_neurons]).astype(dtype)
         
         self.lr = lr
         self.activate = activation_funcs[activation]
@@ -194,16 +194,17 @@ layer_funcs = {
 }
 
 class Sequential:
-    def __init__(self, layers=[], loss='mse', lr=1e-2):
+    def __init__(self, layers=[], loss='mse', lr=1e-2, dtype=cp.float64):
         self.loss = loss_funcs[loss]
         self.lr = lr
+        self.dtype = dtype
 
         if len(layers) > 0:
-            self.layers = [layers[0](lr=self.lr)]
+            self.layers = [layers[0](lr=self.lr, dtype=self.dtype)]
             output_size = self.layers[0].output_size
 
             for layer in layers[1:]:
-                self.layers.append(layer(input_size=output_size, lr=self.lr))
+                self.layers.append(layer(input_size=output_size, lr=self.lr, dtype=self.dtype))
                 output_size = self.layers[-1].output_size
         else:
             self.layers = []
@@ -211,19 +212,28 @@ class Sequential:
         self.history = []
 
     def save(self, path, name):
-        for i, layer in (self.layers):
+        if not os.path.exists(path):
+            os.mkdir(path)
+
+        if not os.path.exists(f'{path}{name}/'):
+            os.mkdir(f'{path}{name}/')
+
+        with npy(f'{path}{name}/history.npy', delete_if_exists=True) as h:
+            h.append(np.array(self.history))
+
+        for i, layer in enumerate(self.layers):
             l_type = str(type(layer).__name__)
-            with npy(f'{path}{name}/{i}-{l_type}/weights.npy', delete_if_exists=True) as w:
+            with npy(f'{path}{name}/{i}_{l_type}_weights.npy', delete_if_exists=True) as w:
                 w.append(layer.weights)
-            with npy(f'{path}{name}/{i}-{l_type}/bias.npy', delete_if_exists=True) as b:
+            with npy(f'{path}{name}/{i}_{l_type}_bias.npy', delete_if_exists=True) as b:
                 b.append(layer.bias)
 
     def add(self, layer):
         if len(self.layers) > 0:
             output_size = self.layers[-1].output_size
-            self.layers.append(layer(input_size=output_size, lr=self.lr))
+            self.layers.append(layer(input_size=output_size, lr=self.lr, dtype=self.dtype))
         else:
-            self.layers.append(layer(lr=self.lr))
+            self.layers.append(layer(lr=self.lr, dtype=self.dtype))
     
     def set(self, loss=None, lr=None):
         if loss is not None:

@@ -161,14 +161,15 @@ class SchroSim:
         self.simulation_frames = []
         self.simulation_frames_ev = []
         
-        simulation_steps = np.empty([0, phi.shape[2], phi.shape[3], 3])
-        simulation_steps = np.append(
+        simulation_steps = cp.empty([0, phi.shape[2], phi.shape[3], 4])
+        simulation_steps = cp.append(
             simulation_steps,
             cp.stack([
-                cp.squeeze(cp.sum(phi, axis=0)),
-                cp.squeeze(cp.sum(self.ev, axis=0)),
-                cp.squeeze(self.pev + self.V)
-            ], axis=-1).get()[np.newaxis],
+                cp.squeeze(cp.real(cp.sum(phi, axis=0)))*(self.dau**self.n_dim),
+                cp.squeeze(cp.imag(cp.sum(phi, axis=0)))*(self.dau**self.n_dim),
+                cp.abs(cp.squeeze(cp.sum(self.ev, axis=0))) / 8,
+                cp.abs(cp.squeeze(self.pev + self.V)) / 8
+            ], axis=-1)[cp.newaxis],
             axis=0
         )
 
@@ -180,19 +181,20 @@ class SchroSim:
 
         for i in range(1, steps+1):
             if train_model:
-                simulation_steps = np.append(
+                simulation_steps = cp.append(
                     simulation_steps,
                     cp.stack([
-                        cp.squeeze(cp.sum(phi, axis=0)),
-                        cp.squeeze(cp.sum(self.ev, axis=0)),
-                        cp.squeeze(self.pev + self.V)
-                    ], axis=-1).get()[np.newaxis],
+                        cp.squeeze(cp.real(cp.sum(phi, axis=0)))*(self.dau**self.n_dim),
+                        cp.squeeze(cp.imag(cp.sum(phi, axis=0)))*(self.dau**self.n_dim),
+                        cp.abs(cp.squeeze(cp.sum(self.ev, axis=0))) / 8,
+                        cp.abs(cp.squeeze(self.pev + self.V)) / 8
+                    ], axis=-1)[cp.newaxis],
                     axis=0
                 )
 
-                if i % train_model == 0:
+                if (i % train_model == 0) or (i == steps):
                     model.train_batch(simulation_steps[:-1], simulation_steps[1:], epochs=1)
-                    simulation_steps = np.empty([0, phi.shape[2], phi.shape[3], 3])
+                    simulation_steps = cp.empty([0, phi.shape[2], phi.shape[3], 4])
                     print(f'Model Trained at Step {i}')
             
 
