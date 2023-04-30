@@ -4,6 +4,7 @@ from npy_append_array import NpyAppendArray as npy
 
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+from nn_lib import Sequential
 
 import os
 
@@ -113,8 +114,8 @@ class SchroSim:
     def simulate(
             self, 
             dims, dau, steps=10000, time_arrow=1,
-            save=False, check_point=None, path=None, sim_name=None, 
-            frame_rate=False, overwrite_save=True
+            frame_rate=False, 
+            model = Sequential(), train_model = False
         ):
         """
         dims:   An int/float/tuple describing how large each spacial dimention is. If a single value is given then only 1 dimention is simulated
@@ -171,12 +172,6 @@ class SchroSim:
             axis=0
         )
 
-        if path is not None:
-            if not os.path.exists(path):
-                os.mkdir(path)
-            with npy(f'{path}{sim_name}.npy', delete_if_exists=overwrite_save) as f:
-                f.append(simulation_steps)
-            simulation_steps = np.empty([0, phi.shape[2], phi.shape[3], 3])
 
         if frame_rate:
             self.simulation_frames.append(cp.sum(phi, axis=0).get())
@@ -184,7 +179,7 @@ class SchroSim:
 
 
         for i in range(1, steps+1):
-            if save:
+            if train_model:
                 simulation_steps = np.append(
                     simulation_steps,
                     cp.stack([
@@ -195,12 +190,11 @@ class SchroSim:
                     axis=0
                 )
 
-                if check_point is not None and ((i % check_point == 0) or (i == steps)):
-                    with npy(f'{path}{sim_name}.npy') as f:
-                        f.append(simulation_steps)
+                if i % train_model == 0:
+                    model.train_batch(simulation_steps[:-1], simulation_steps[1:], epochs=1)
                     simulation_steps = np.empty([0, phi.shape[2], phi.shape[3], 3])
-                    print(f'{sim_name} saved at checkpoint step: {i}')
-
+                    print(f'Model Trained at Step {i}')
+            
 
             if frame_rate and (i % frame_rate == 0):
                 print(f'Step: {i}')
