@@ -1,5 +1,7 @@
 *.npy
+*.gif
 /__pycache__
 /simulations
 /models
 train_model.py
+scratch*

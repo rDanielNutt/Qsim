@@ -11,7 +11,7 @@ import os
 
 class SchroSim:
 
-    def __init__(self, *_, reduced_h=1, q_electron=-1, q_proton=1, m_electron=1, proton_width=2, vac_perm=1):
+    def __init__(self, *, reduced_h=1, q_electron=-1, q_proton=1, m_electron=1, proton_width=2, vac_perm=1):
         self.h = reduced_h
         self.qe = q_electron
         self.qp = q_proton
@@ -44,6 +44,7 @@ class SchroSim:
 
         return (d_dxdx * self.h * 1j / (2 * self.me)) + ((1j * phi * ((cp.sum(self.ev, axis=0, keepdims=True) - self.ev)  + self.V + self.pev)) / self.h)
 
+
     # Calculate the electric field potentials produced by the charged particles in the system
     def e_field(self, phi, n_samp):
 
@@ -54,7 +55,7 @@ class SchroSim:
         else:
             self.pev = cp.zeros([1])
         
-        if phi.shape[0] > 1:
+        if n_samp > 0:
             self.ev = cp.empty([0, *phi.shape[1:]])
             for el in phi:
                 pos = self.coor.reshape([2, -1]).T[cp.random.choice(el.size, size=n_samp, p=(cp.abs(el.reshape([-1])) / cp.sum(abs(el))))]
@@ -165,8 +166,8 @@ class SchroSim:
         simulation_steps = cp.append(
             simulation_steps,
             cp.stack([
-                cp.sum(phi, axis=0),
-                (self.pev + self.V).reshape(phi.shape[1:]) * self.ep * self.dau
+                cp.sum(cp.abs(phi), axis=0),
+                cp.sum(self.ev * self.ep * self.dau, axis=0)
             ], axis=-1),
             axis=0
         )
@@ -182,15 +183,15 @@ class SchroSim:
                 simulation_steps = cp.append(
                     simulation_steps,
                     cp.stack([
-                    cp.sum(phi, axis=0),
-                    (self.pev + self.V).reshape(phi.shape[1:]) * self.ep * self.dau
+                    cp.sum(cp.abs(phi), axis=0),
+                    cp.sum(self.ev * self.ep * self.dau, axis=0)
                 ], axis=-1),
                     axis=0
                 )
 
                 if (i % train_model == 0) or (i == steps):
-                    model.train_batch(simulation_steps[:-1], simulation_steps[1:, :, :, :1], epochs=5)
-                    simulation_steps = simulation_steps[-1:]
+                    model.train_batch(simulation_steps[:, :, :, :1], simulation_steps[:, :, :, 1:], epochs=5)
+                    simulation_steps = cp.empty([0, *simulation_steps.shape[1:]])
                     print(f'Model Trained at Step {i}: loss [{np.mean(model.history[-5:])}]')
             
 
@@ -199,15 +200,13 @@ class SchroSim:
                 self.simulation_frames.append(cp.sum(phi, axis=0).get())
                 self.simulation_frames_ev.append((cp.sum(self.ev, axis=0) + self.V + self.pev).get())
 
-            self.e_field(phi, ev_samp_rate)
             if sim_with_model:
-                phi = model.predict(cp.stack([
-                                        cp.sum(phi, axis=0),
-                                        (self.pev + self.V).reshape(phi.shape[1:]) * self.ep * self.dau
-                                    ], axis=-1)).reshape([1, *phi.shape[1:]])
-                
+                self.e_field(phi, n_samp=0)
+                self.ev = model.predict(phi[:,0,:,:,cp.newaxis]).reshape(phi.shape) / (self.dau * self.ep)
             else:
-                phi = self.norm(self.rk4(phi))
+                self.e_field(phi, ev_samp_rate)
+
+            phi = self.norm(self.rk4(phi))
 
 
         # free up vram and return saved time steps
