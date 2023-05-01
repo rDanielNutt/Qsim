@@ -36,6 +36,12 @@ def relu(x):
     a = x * da
     return a, da
 
+def comp_norm(x):
+    asum = cp.sqrt(cp.nansum(cp.square(cp.abs(x)), axis=(1,2,3), keepdims=True) * 1e-4)
+    a = x / asum
+    da = ((1+1j) / asum) - (((1e-4 + 1e-4j) * cp.square(x)) / cp.square(asum))
+    return a, da
+
 def none(x):
     return x, 1
 
@@ -44,28 +50,25 @@ activation_funcs = {
     'tanh': tanh,
     'softmax': softmax,
     'relu': relu,
+    'norm': comp_norm,
     'none': none,
 }
 
 
 def mse(true, pred):
-    loss = cp.mean(cp.sum(cp.square(pred - true), axis=(1, 2, 3)))
+    loss = cp.mean(cp.abs(pred - true))
     dloss = pred - true
     return loss, dloss
 
 def cat_crossentropy(true, pred):
-    loss = cp.mean(-cp.sum((true * cp.log(pred)) + ((1 - true) * cp.log(1 - pred)), axis=1))
+    loss = cp.mean(-(true * cp.log(pred)) + ((1 - true) * cp.log(1 - pred)))
     dloss = - (pred - true) / (cp.square(pred) - pred)
     return loss, dloss
 
 def wave_loss(true, pred):
-    pred_abs = cp.sqrt(cp.sum(cp.square(pred[:,:,:, :2]), axis=-1, keepdims=True))
-    true_abs = cp.sqrt(cp.sum(cp.square(pred[:,:,:, :2]), axis=-1, keepdims=True))
-    loss = cp.mean(cp.sum(cp.square(pred_abs - true_abs) + cp.square(pred[:,:,:, 2:] - true[:,:,:, 2:]), axis=(1, 2, 3)))
-
-    dloss = 2 * pred[:,:,:, :2] * ((pred_abs - true_abs) / pred_abs)
-    dloss = cp.append(dloss, pred[:,:,:, 2:] - true[:,:,:, 2:], axis=-1)
-
+    loss = cp.mean(cp.abs(cp.abs(pred) - cp.abs(true))) + cp.mean(cp.abs(pred - true))
+    dloss = 2 * pred * ((cp.abs(pred) - cp.abs(true)) / cp.abs(pred))
+    dloss = (pred - true) + cp.where(cp.isfinite(dloss), dloss, 0)
     return loss, dloss
 
 loss_funcs = {
@@ -96,7 +99,7 @@ class BaseConv2D:
         elif len(kernel_size) == 2:
             self.kernel_size = (*kernel_size, self.input_size[2])
 
-        self.weights = cp.random.rand(1, *self.kernel_size, self.n_kernels).astype(dtype) / 1000
+        self.weights = cp.random.rand(1, *self.kernel_size, self.n_kernels).astype(dtype) 
         self.bias = cp.zeros([1, 1, 1, self.n_kernels]).astype(dtype)
 
         if self.pad_type == 'same':
@@ -129,7 +132,7 @@ class BaseConv2D:
         p1 = self.pad[2]
         grad = cp.sum(fftconvolve(grad, cp.flip(self.weights, axis=(1, 2)), mode='full', axes=(1, 2)), axis=4)
 
-        self.bias -= (self.lr * bgrad)
+        #self.bias -= (self.lr * bgrad)
         self.weights -= (self.lr * wgrad)
 
         return grad[:, p0[0]:grad.shape[1]-p0[1], p1[0]:grad.shape[2]-p1[1], :]
@@ -234,10 +237,22 @@ class Sequential:
 
         for i, layer in enumerate(self.layers):
             l_type = str(type(layer).__name__)
-            with npy(f'{path}{name}/{i}_{l_type}_weights.npy', delete_if_exists=True) as w:
-                w.append(layer.weights)
-            with npy(f'{path}{name}/{i}_{l_type}_bias.npy', delete_if_exists=True) as b:
-                b.append(layer.bias)
+            try:
+                with npy(f'{path}{name}/{i}_{l_type}_weights.npy', delete_if_exists=True) as w:
+                    w.append(layer.weights)
+                with npy(f'{path}{name}/{i}_{l_type}_bias.npy', delete_if_exists=True) as b:
+                    b.append(layer.bias)
+            except AttributeError:
+                continue
+
+    def load_weights(self, path, name):
+        for i, layer in enumerate(self.layers):
+            l_type = str(type(layer).__name__)
+            try:
+                layer.weights = cp.load(f'{path}{name}/{i}_{l_type}_weights.npy')
+                layer.bias = cp.load(f'{path}{name}/{i}_{l_type}_bias.npy')
+            except AttributeError:
+                continue
 
     def add(self, layer):
         if len(self.layers) > 0:
@@ -268,10 +283,14 @@ class Sequential:
         for epoch in range(1, epochs+1):
             pred = self.predict(x)
             loss, grad = self.loss(y, pred)
-            self.backprop(grad)
 
+            if not cp.all(cp.isfinite(loss)):
+                raise Exception('Training Error: Non-finite values present in loss') 
+            if not cp.all(cp.isfinite(grad)):
+                raise Exception('Training Error: Non-finite values present in grad')
+
+            self.backprop(grad)
             self.history.append(loss.get())
-            print(f'Epoch {epoch: >5}/{epochs: <3}: loss[{loss:.3f}]')
     
 
     def train(self, x, y, batch_size=None, epochs=1, loss=None, lr=None):

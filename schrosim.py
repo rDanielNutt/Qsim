@@ -14,7 +14,7 @@ class SchroSim:
     h = 1   # Planck's constant divided by 2*pi (J*s)
     qe = -1 # electron charge
     qp = 1 # proton charge
-    ep = cp.pi * 4 # vaccum permittivity 
+    ep = 1 # vaccum permittivity 
     me = 1    # mass of electron in atomic mass units
     c = qe**2 / (ep * h * (1/137)) # speed of light
     pw = 0.04
@@ -41,7 +41,7 @@ class SchroSim:
         d_dxdx = cp.diff(phi, axis=2, n=2, prepend=0, append=0) / self.dau
         d_dxdx += (cp.diff(phi, axis=3, n=2, prepend=0, append=0)  / self.dau)
 
-        return (d_dxdx * self.h * 1j / (2 * self.me)) + ((1j * self.qe * (self.ev + self.pev) * phi) / self.h) + ((1j * phi * self.V) / self.h)
+        return (d_dxdx * self.h * 1j / (2 * self.me)) + ((1j * phi * ((cp.sum(self.ev, axis=0, keepdims=True) - self.ev)  + self.V + self.pev)) / self.h)
 
     # Calculate the electric field potentials produced by the charged particles in the system
     def e_field(self, phi, n_samp):
@@ -53,14 +53,14 @@ class SchroSim:
         else:
             self.pev = cp.zeros([1])
         
-        for i, el in enumerate(phi):
-            pos = self.coor.reshape([2, -1]).T[cp.random.choice(el.size, size=n_samp, p=(cp.abs(el.reshape([-1])) / cp.sum(abs(el))))]
-            temp_ev = self.qe / (self.ep * cp.sqrt(cp.sum(cp.square(self.coor - pos[:,:,cp.newaxis,cp.newaxis]), axis=1, keepdims=True)))
-            temp_ev = cp.where(cp.isfinite(temp_ev), temp_ev, 0)
-            self.ev[i] = cp.nanmean(temp_ev, axis=0)
-
-        self.ev = cp.sum(self.ev, axis=0, keepdims=True) - self.ev
-
+        if phi.shape[0] > 1:
+            self.ev = cp.empty([0, *phi.shape[1:]])
+            for el in phi:
+                pos = self.coor.reshape([2, -1]).T[cp.random.choice(el.size, size=n_samp, p=(cp.abs(el.reshape([-1])) / cp.sum(abs(el))))]
+                temp_ev = cp.nanmean(self.qe / (self.ep * cp.clip(cp.sqrt(cp.sum(cp.square(self.coor - pos.reshape([-1,2,1,1])), axis=1, keepdims=True)), self.dau, None)), axis=0, keepdims=True)
+                self.ev = cp.append(self.ev, temp_ev, axis=0)
+        else:
+            self.ev = cp.zeros(phi.shape)
 
     # Calculates the integral over time using the Rk4 method
     def rk4(self, phi, **kwargs):
@@ -110,9 +110,10 @@ class SchroSim:
     # Simulates the currently specified environment.
     def simulate(
             self, 
-            dims, dau, steps=10000, time_arrow=1,
+            dims, dau, steps=10000, time_arrow=0.5,
             frame_rate=False, 
             model = Sequential(), train_model = False,
+            sim_with_model = False,
             ev_samp_rate=1,
         ):
         """
@@ -159,15 +160,13 @@ class SchroSim:
         self.simulation_frames = []
         self.simulation_frames_ev = []
         
-        simulation_steps = cp.empty([0, phi.shape[2], phi.shape[3], 4])
+        simulation_steps = cp.empty([0, phi.shape[2], phi.shape[3], 2])
         simulation_steps = cp.append(
             simulation_steps,
             cp.stack([
-                cp.squeeze(cp.real(cp.sum(phi, axis=0)))*(self.dau**self.n_dim),
-                cp.squeeze(cp.imag(cp.sum(phi, axis=0)))*(self.dau**self.n_dim),
-                cp.abs(cp.squeeze(cp.sum(self.ev, axis=0))) / 8,
-                cp.abs(cp.squeeze(self.pev + self.V)) / 8
-            ], axis=-1)[cp.newaxis],
+                cp.sum(phi, axis=0),
+                (self.pev + self.V).reshape(phi.shape[1:]) * self.ep * self.dau
+            ], axis=-1),
             axis=0
         )
 
@@ -182,18 +181,16 @@ class SchroSim:
                 simulation_steps = cp.append(
                     simulation_steps,
                     cp.stack([
-                        cp.squeeze(cp.real(cp.sum(phi, axis=0)))*(self.dau**self.n_dim),
-                        cp.squeeze(cp.imag(cp.sum(phi, axis=0)))*(self.dau**self.n_dim),
-                        cp.abs(cp.squeeze(cp.sum(self.ev, axis=0))) / 8,
-                        cp.abs(cp.squeeze(self.pev + self.V)) / 8
-                    ], axis=-1)[cp.newaxis],
+                    cp.sum(phi, axis=0),
+                    (self.pev + self.V).reshape(phi.shape[1:]) * self.ep * self.dau
+                ], axis=-1),
                     axis=0
                 )
 
                 if (i % train_model == 0) or (i == steps):
-                    model.train_batch(simulation_steps[:-1], simulation_steps[1:], epochs=1)
-                    simulation_steps = cp.empty([0, phi.shape[2], phi.shape[3], 4])
-                    print(f'Model Trained at Step {i}')
+                    model.train_batch(simulation_steps[:-1], simulation_steps[1:, :, :, :1], epochs=5)
+                    simulation_steps = simulation_steps[-1:]
+                    print(f'Model Trained at Step {i}: loss [{np.mean(model.history[-5:])}]')
             
 
             if frame_rate and (i % frame_rate == 0):
@@ -202,7 +199,14 @@ class SchroSim:
                 self.simulation_frames_ev.append((cp.sum(self.ev, axis=0) + self.V + self.pev).get())
 
             self.e_field(phi, ev_samp_rate)
-            phi = self.norm(self.rk4(phi))
+            if sim_with_model:
+                phi = model.predict(cp.stack([
+                                        cp.sum(phi, axis=0),
+                                        (self.pev + self.V).reshape(phi.shape[1:]) * self.ep * self.dau
+                                    ], axis=-1)).reshape([1, *phi.shape[1:]])
+                
+            else:
+                phi = self.norm(self.rk4(phi))
 
 
         # free up vram and return saved time steps
