@@ -38,14 +38,13 @@ class SchroSim:
     # Calculate the partial derivative of the wave function with respect to time
     def d_dt(self, phi):
         
-        self.e_field(phi)
         d_dxdx = cp.diff(phi, axis=2, n=2, prepend=0, append=0) / self.dau
         d_dxdx += (cp.diff(phi, axis=3, n=2, prepend=0, append=0)  / self.dau)
 
         return (d_dxdx * self.h * 1j / (2 * self.me)) + ((1j * self.qe * (self.ev + self.pev) * phi) / self.h) + ((1j * phi * self.V) / self.h)
 
     # Calculate the electric field potentials produced by the charged particles in the system
-    def e_field(self, phi):
+    def e_field(self, phi, n_samp):
 
         if self.protons.shape[0] > 0:
             p_rad = cp.sqrt(cp.sum(cp.square(self.coor - self.protons[:,0].reshape([-1, 2, 1, 1])), axis=1, keepdims=True))
@@ -54,13 +53,11 @@ class SchroSim:
         else:
             self.pev = cp.zeros([1])
         
-        positions = cp.empty([0, 2])
-        for el in phi:
-            pos = self.coor.reshape([2, -1]).T[cp.random.choice(el.size, size=1, p=(cp.abs(el.reshape([-1])) / cp.sum(abs(el))))]
-            positions = cp.append(positions, pos, axis=0)
-
-        self.ev = self.qe / (self.ep * cp.sqrt(cp.sum(cp.square(self.coor - positions.reshape([-1,2,1,1])), axis=1, keepdims=True)))
-        self.ev = cp.where(cp.isfinite(self.ev), self.ev, 0)
+        for i, el in enumerate(phi):
+            pos = self.coor.reshape([2, -1]).T[cp.random.choice(el.size, size=n_samp, p=(cp.abs(el.reshape([-1])) / cp.sum(abs(el))))]
+            temp_ev = self.qe / (self.ep * cp.sqrt(cp.sum(cp.square(self.coor - pos[:,:,cp.newaxis,cp.newaxis]), axis=1, keepdims=True)))
+            temp_ev = cp.where(cp.isfinite(temp_ev), temp_ev, 0)
+            self.ev[i] = cp.nanmean(temp_ev, axis=0)
 
         self.ev = cp.sum(self.ev, axis=0, keepdims=True) - self.ev
 
@@ -115,7 +112,8 @@ class SchroSim:
             self, 
             dims, dau, steps=10000, time_arrow=1,
             frame_rate=False, 
-            model = Sequential(), train_model = False
+            model = Sequential(), train_model = False,
+            ev_samp_rate=1,
         ):
         """
         dims:   An int/float/tuple describing how large each spacial dimention is. If a single value is given then only 1 dimention is simulated
@@ -156,7 +154,7 @@ class SchroSim:
         self.dims = [d.get() for d in self.dims]
         cp._default_memory_pool.free_all_blocks()
 
-        self.e_field(phi)
+        self.e_field(phi, ev_samp_rate)
 
         self.simulation_frames = []
         self.simulation_frames_ev = []
@@ -203,6 +201,7 @@ class SchroSim:
                 self.simulation_frames.append(cp.sum(phi, axis=0).get())
                 self.simulation_frames_ev.append((cp.sum(self.ev, axis=0) + self.V + self.pev).get())
 
+            self.e_field(phi, ev_samp_rate)
             phi = self.norm(self.rk4(phi))
 
 

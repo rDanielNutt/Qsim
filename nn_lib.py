@@ -49,7 +49,7 @@ activation_funcs = {
 
 
 def mse(true, pred):
-    loss = cp.mean(cp.square(pred - true))
+    loss = cp.mean(cp.sum(cp.square(pred - true), axis=(1, 2, 3)))
     dloss = pred - true
     return loss, dloss
 
@@ -58,9 +58,20 @@ def cat_crossentropy(true, pred):
     dloss = - (pred - true) / (cp.square(pred) - pred)
     return loss, dloss
 
+def wave_loss(true, pred):
+    pred_abs = cp.sqrt(cp.sum(cp.square(pred[:,:,:, :2]), axis=-1, keepdims=True))
+    true_abs = cp.sqrt(cp.sum(cp.square(pred[:,:,:, :2]), axis=-1, keepdims=True))
+    loss = cp.mean(cp.sum(cp.square(pred_abs - true_abs) + cp.square(pred[:,:,:, 2:] - true[:,:,:, 2:]), axis=(1, 2, 3)))
+
+    dloss = 2 * pred[:,:,:, :2] * ((pred_abs - true_abs) / pred_abs)
+    dloss = cp.append(dloss, pred[:,:,:, 2:] - true[:,:,:, 2:], axis=-1)
+
+    return loss, dloss
+
 loss_funcs = {
     'mse': mse,
     'catcrossentropy': cat_crossentropy,
+    'wave': wave_loss,
 }
 
 

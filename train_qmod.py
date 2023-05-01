@@ -5,7 +5,7 @@ from nn_lib import Sequential, Conv2D
 
 model = Sequential([
     Conv2D(n_kernels=4, kernel_size=5, padding='same', activation='tanh', input_size=(500,500,4)),
-    ], lr=1e-6)
+    ], lr=1e-6, loss='wave')
 
 parab = lambda x: -cp.sum((x)**2, axis=1, keepdims=True)
 
