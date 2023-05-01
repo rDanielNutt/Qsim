@@ -157,7 +157,12 @@ class SchroSim:
         self.dims = [d.get() for d in self.dims]
         cp._default_memory_pool.free_all_blocks()
 
-        self.e_field(phi, ev_samp_rate)
+        if sim_with_model:
+            self.e_field(phi, 0)
+            print(cp.abs(phi[:,0,:,:,cp.newaxis]).shape)
+            self.ev = model.predict(cp.abs(phi[:,0,:,:,cp.newaxis])).reshape(phi.shape) * -1
+        else:
+            self.e_field(phi, ev_samp_rate)
 
         self.simulation_frames = []
         self.simulation_frames_ev = []
@@ -167,7 +172,7 @@ class SchroSim:
             simulation_steps,
             cp.stack([
                 cp.sum(cp.abs(phi), axis=0),
-                cp.sum(self.ev * self.ep * self.dau, axis=0)
+                cp.sum(self.ev, axis=0) * -1
             ], axis=-1),
             axis=0
         )
@@ -184,7 +189,7 @@ class SchroSim:
                     simulation_steps,
                     cp.stack([
                     cp.sum(cp.abs(phi), axis=0),
-                    cp.sum(self.ev * self.ep * self.dau, axis=0)
+                    cp.sum(self.ev, axis=0) * -1
                 ], axis=-1),
                     axis=0
                 )
@@ -202,7 +207,7 @@ class SchroSim:
 
             if sim_with_model:
                 self.e_field(phi, n_samp=0)
-                self.ev = model.predict(phi[:,0,:,:,cp.newaxis]).reshape(phi.shape) / (self.dau * self.ep)
+                self.ev = model.predict(cp.abs(phi[:,0,:,:,cp.newaxis])).reshape(phi.shape) * -1
             else:
                 self.e_field(phi, ev_samp_rate)
 

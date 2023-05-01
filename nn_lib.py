@@ -99,7 +99,7 @@ class BaseConv2D:
         elif len(kernel_size) == 2:
             self.kernel_size = (*kernel_size, self.input_size[2])
 
-        self.weights = cp.random.rand(1, *self.kernel_size, self.n_kernels).astype(dtype) 
+        self.weights = cp.random.rand(1, *self.kernel_size, self.n_kernels).astype(dtype) / 100
         self.bias = cp.zeros([1, 1, 1, self.n_kernels]).astype(dtype)
 
         if self.pad_type == 'same':
@@ -132,7 +132,7 @@ class BaseConv2D:
         p1 = self.pad[2]
         grad = cp.sum(fftconvolve(grad, cp.flip(self.weights, axis=(1, 2)), mode='full', axes=(1, 2)), axis=4)
 
-        #self.bias -= (self.lr * bgrad)
+        self.bias -= (self.lr * bgrad)
         self.weights -= (self.lr * wgrad)
 
         return grad[:, p0[0]:grad.shape[1]-p0[1], p1[0]:grad.shape[2]-p1[1], :]
