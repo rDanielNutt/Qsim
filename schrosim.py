@@ -61,8 +61,7 @@ class SchroSim:
                 pos = self.coor.reshape([2, -1]).T[cp.random.choice(el.size, size=n_samp, p=(cp.abs(el.reshape([-1])) / cp.sum(abs(el))))]
                 temp_ev = cp.nanmean(self.qe / (self.ep * cp.clip(cp.sqrt(cp.sum(cp.square(self.coor - pos.reshape([-1,2,1,1])), axis=1, keepdims=True)), self.dau, None)), axis=0, keepdims=True)
                 self.ev = cp.append(self.ev, temp_ev, axis=0)
-        else:
-            self.ev = cp.zeros(phi.shape)
+       
 
     # Calculates the integral over time using the Rk4 method
     def rk4(self, phi, **kwargs):
@@ -159,7 +158,6 @@ class SchroSim:
 
         if sim_with_model:
             self.e_field(phi, 0)
-            print(cp.abs(phi[:,0,:,:,cp.newaxis]).shape)
             self.ev = model.predict(cp.abs(phi[:,0,:,:,cp.newaxis])).reshape(phi.shape) * -1
         else:
             self.e_field(phi, ev_samp_rate)
@@ -168,15 +166,6 @@ class SchroSim:
         self.simulation_frames_ev = []
         
         simulation_steps = cp.empty([0, phi.shape[2], phi.shape[3], 2])
-        simulation_steps = cp.append(
-            simulation_steps,
-            cp.stack([
-                cp.sum(cp.abs(phi), axis=0),
-                cp.sum(self.ev, axis=0) * -1
-            ], axis=-1),
-            axis=0
-        )
-
 
         if frame_rate:
             self.simulation_frames.append(cp.sum(phi, axis=0).get())

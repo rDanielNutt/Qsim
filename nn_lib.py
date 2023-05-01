@@ -132,7 +132,7 @@ class BaseConv2D:
         p1 = self.pad[2]
         grad = cp.sum(fftconvolve(grad, cp.flip(self.weights, axis=(1, 2)), mode='full', axes=(1, 2)), axis=4)
 
-        self.bias -= (self.lr * bgrad)
+        # self.bias -= (self.lr * bgrad)
         self.weights -= (self.lr * wgrad)
 
         return grad[:, p0[0]:grad.shape[1]-p0[1], p1[0]:grad.shape[2]-p1[1], :]

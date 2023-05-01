@@ -19,14 +19,14 @@ model = Sequential([
 model.load_weights(path='./ev_models/', name='ev_mod')
 
 sim = SchroSim()
-sim.add_potential(parab)
+# sim.add_potential(parab)
 # sim.add_proton(pos=[-5, 0])
 # sim.add_proton(pos=[-4, 0])
-# sim.add_electron(pos=[-1, -1], p=[0, 0], sig=0.25)
-sim.add_electron(pos=[0, 0], p=[5, 0], sig=0.25)
+# sim.add_electron(pos=[-1, 0], p=[5, 0], sig=0.25)
+sim.add_electron(pos=[1, 0], p=[0, 0], sig=0.25)
 
-sim.simulate(dims=(5,), dau=1e-2, steps=10000, time_arrow=0.5,
-            frame_rate=10, ev_samp_rate=32, model=model, sim_with_model=False)
+sim.simulate(dims=(10,), dau=1e-2, steps=5000, time_arrow=0.5,
+            frame_rate=10, ev_samp_rate=32, model=model, sim_with_model=True)
 
 anim = sim.animate(interval=1)
 plt.show()

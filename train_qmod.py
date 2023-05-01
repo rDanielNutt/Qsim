@@ -29,7 +29,7 @@ for i in range(5):
     sim = SchroSim()
     sim.add_electron(p=randint(-5,5,2), pos=randint(-3,3,2)/10, sig=0.25)
     sim.add_potential(parab)
-    sim.simulate(dims=(5,5), dau=1e-2, steps=1000, model=model, train_model=10, ev_samp_rate=32)
+    sim.simulate(dims=(5,5), dau=1e-2, steps=1000, model=model, train_model=20, ev_samp_rate=64)
     model.save(path='./ev_models/', name='ev_mod')
     print(f'\nCompleted ev training sim {i}\n')
     
