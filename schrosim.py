@@ -61,7 +61,8 @@ class SchroSim:
                 pos = self.coor.reshape([2, -1]).T[cp.random.choice(el.size, size=n_samp, p=(cp.abs(el.reshape([-1])) / cp.sum(abs(el))))]
                 temp_ev = cp.nanmean(self.qe / (self.ep * cp.clip(cp.sqrt(cp.sum(cp.square(self.coor - pos.reshape([-1,2,1,1])), axis=1, keepdims=True)), self.dau, None)), axis=0, keepdims=True)
                 self.ev = cp.append(self.ev, temp_ev, axis=0)
-       
+        else:
+            self.ev = cp.zeros([1, *phi.shape[1:]])
 
     # Calculates the integral over time using the Rk4 method
     def rk4(self, phi, **kwargs):
