@@ -11,29 +11,30 @@ import os
 
 class SchroSim:
 
-    h = 1   # Planck's constant divided by 2*pi (J*s)
-    qe = -1 # electron charge
-    qp = 1 # proton charge
-    ep = 1 # vaccum permittivity 
-    me = 1    # mass of electron in atomic mass units
-    c = qe**2 / (ep * h * (1/137)) # speed of light
-    pw = 0.04
+    def __init__(self, *_, reduced_h=1, q_electron=-1, q_proton=1, m_electron=1, proton_width=2, vac_perm=1):
+        self.h = reduced_h
+        self.qe = q_electron
+        self.qp = q_proton
+        self.me = m_electron
+        self.pw = proton_width
+        self.ep = vac_perm
+        self.c = self.qe**2 / (self.ep * self.h * (1/137))
 
-    dims = (0,0)
-    ext_potential_funcs = []
+        self.dims = (0,0)
+        self.ext_potential_funcs = []
+        
+        self.electrons = []
+        self.protons = np.empty([0, 2, 2])
+        self.V = np.empty([])
+        self.ev = np.empty([])
+        self.pev = np.empty([])
 
-    electrons = []
-    protons = np.empty(shape=[0, 2, 2])
-    V = np.empty([])
-    ev = np.empty([])
-    pev = np.empty([])
+        self.dau = 1e-2
+        self.dt = 5e-3
+        self.n_dim = 0
 
-    dau = 0
-    dt = 0
-    n_dim = 0
-
-    simulation_frames = []
-    simulation_frames_ev = []
+        self.simulation_frames = []
+        self.simulation_frames_ev = []
 
     # Calculate the partial derivative of the wave function with respect to time
     def d_dt(self, phi):
