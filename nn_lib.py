@@ -66,9 +66,8 @@ def cat_crossentropy(true, pred):
     return loss, dloss
 
 def wave_loss(true, pred):
-    loss = cp.mean(cp.abs(cp.abs(pred) - cp.abs(true))) + cp.mean(cp.abs(pred - true))
-    dloss = 2 * pred * ((cp.abs(pred) - cp.abs(true)) / cp.abs(pred))
-    dloss = (pred - true) + cp.where(cp.isfinite(dloss), dloss, 0)
+    loss = cp.mean(cp.abs(true) * cp.abs(pred - true))
+    dloss = cp.abs(true) * (pred - true)
     return loss, dloss
 
 loss_funcs = {

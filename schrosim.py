@@ -177,15 +177,15 @@ class SchroSim:
                 simulation_steps = cp.append(
                     simulation_steps,
                     cp.stack([
-                    cp.sum(cp.abs(phi), axis=0),
-                    cp.sum(self.ev, axis=0) * -1
+                        cp.sum(phi, axis=0),
+                        (self.pev + self.V).reshape(phi.shape[1:])
                 ], axis=-1),
                     axis=0
                 )
 
                 if (i % train_model == 0) or (i == steps):
-                    model.train_batch(simulation_steps[:, :, :, :1], simulation_steps[:, :, :, 1:], epochs=5)
-                    simulation_steps = cp.empty([0, *simulation_steps.shape[1:]])
+                    model.train_batch(simulation_steps[:-1, :, :, :1], simulation_steps[1:, :, :, 1:], epochs=5)
+                    simulation_steps = simulation_steps[-1:]
                     print(f'Model Trained at Step {i}: loss [{np.mean(model.history[-5:])}]')
             
 
@@ -194,13 +194,15 @@ class SchroSim:
                 self.simulation_frames.append(cp.sum(phi, axis=0).get())
                 self.simulation_frames_ev.append((cp.sum(self.ev, axis=0) + self.V + self.pev).get())
 
+            self.e_field(phi, ev_samp_rate)
             if sim_with_model:
-                self.e_field(phi, n_samp=0)
-                self.ev = model.predict(cp.abs(phi[:,0,:,:,cp.newaxis])).reshape(phi.shape) * -1
+                self.phi = model.predict(cp.stack([
+                        cp.sum(phi, axis=0),
+                        (self.pev + self.V).reshape(phi.shape[1:])
+                ], axis=-1)).reshape(phi.shape) 
             else:
-                self.e_field(phi, ev_samp_rate)
+                phi = self.norm(self.rk4(phi))
 
-            phi = self.norm(self.rk4(phi))
 
 
         # free up vram and return saved time steps

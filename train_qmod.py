@@ -5,8 +5,8 @@ from nn_lib import Sequential, Conv2D
 import matplotlib.pyplot as plt
 
 model = Sequential([
-    Conv2D(n_kernels=1, kernel_size=11, padding='same', activation='relu', input_size=(500,500,1)),
-    ], lr=1e-7, loss='mse')
+    Conv2D(n_kernels=1, kernel_size=3, padding='same', activation='norm', input_size=(500,500,2)),
+    ], lr=1e-7, loss='wave')
 
 parab = lambda x: cp.sum(-(x)**2, axis=1, keepdims=True)
 
@@ -25,12 +25,12 @@ parab = lambda x: cp.sum(-(x)**2, axis=1, keepdims=True)
 #     print(f'\nCompleted 1e mo sim {i}\n')
 
 
-for i in range(5):
+for i in range(10):
     sim = SchroSim()
-    sim.add_electron(p=randint(-5,5,2), pos=randint(-3,3,2)/10, sig=0.25)
+    sim.add_electron(p=randint(-5,6,2), pos=randint(-3,4,2)/10, sig=0.25)
     sim.add_potential(parab)
-    sim.simulate(dims=(5,5), dau=1e-2, steps=1000, model=model, train_model=20, ev_samp_rate=64)
-    model.save(path='./ev_models/', name='ev_mod')
+    sim.simulate(dims=(5,5), dau=1e-2, steps=1000, model=model, train_model=20, ev_samp_rate=0)
+    model.save(path='./q_models/', name='1e_parab_mod')
     print(f'\nCompleted ev training sim {i}\n')
     
 
