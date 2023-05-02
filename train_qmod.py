@@ -9,7 +9,7 @@ model = Sequential([
     ], lr=1e-7, loss='wave', dtype=cp.complex128)
 model.layers[0].weights *= 1j
 
-parab = lambda x: cp.sum(-(x)**2, axis=1, keepdims=True)
+parab = lambda x: cp.sum(-(x*0.25)**2, axis=1, keepdims=True)
 
 # for i in range(5):
 #     sim = SchroSim()
