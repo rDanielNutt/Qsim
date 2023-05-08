@@ -124,7 +124,7 @@ class BaseConv2D:
     def backprop(self, grad):
         grad = (self.dact * grad)[:,:,:,cp.newaxis]
         grad = cp.where(cp.isfinite(grad), grad, 0)
-        wgrad = cp.sum(fftconvolve(self.x, grad, mode='valid', axes=(1, 2)), axis=0, keepdims=True)
+        wgrad = cp.sum(fftconvolve(cp.flip(self.x, axis=(1,2)), grad, mode='valid', axes=(1, 2)), axis=0, keepdims=True)
         bgrad = cp.sum(grad, axis=(0, 1, 2))
 
         p0 = self.pad[1]
