@@ -1,4 +1,4 @@
-from schrosim import SchroSim
+from qsim.schrosim import SchroSim
 import cupy as cp
 from numpy.random import randint
 from nn_lib import Sequential, Conv2D

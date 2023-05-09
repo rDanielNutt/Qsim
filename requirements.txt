@@ -1,5 +1,0 @@
-cudatoolkit
-cupy
-matplotlib==3.5
-nvidia-ml-py3==7
-numpy
