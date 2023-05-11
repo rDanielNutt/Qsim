@@ -1,6 +1,6 @@
 *.npy
 *.gif
-/__pycache__
+__pycache__
 /simulations
 /models
 train_model.py

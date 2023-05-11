@@ -70,8 +70,6 @@ class SchroSim:
         else:
             self.ev = cp.zeros([1, *phi.shape[1:]])
 
-        return self.ev, self.V
-
     # Calculates the integral over time using the Rk4 method
     def rk4(self, phi, n_samp):
         self.e_field(phi, n_samp)
@@ -280,10 +278,6 @@ class SchroSim:
 
         self.simulation_frames = []
         self.simulation_frames_ev = []
-        
-        if model is not None:
-            model.e_field = self.e_field
-            model.sim_steps = cp.empty([0, phi.shape[2], phi.shape[3], 2])
 
         if save_rate:
             self.simulation_frames.append(cp.sum(phi, axis=0).get())

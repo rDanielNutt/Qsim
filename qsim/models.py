@@ -3,17 +3,15 @@ import numpy as np
 
 
 class SchroModel:
-    def __init__(self, model, dt:float, dau:float):
+    def __init__(self, model, sim):
         self.model = model
-        self.dt = dt
-        self.dau = dau
-        self.e_field = lambda x, y: x
+        self.sim = sim
         self.sim_steps = cp.empty([])
     
-    def add_step(self, phi, ev, V):
+    def add_step(self, phi):
         step = cp.stack([
                 cp.sum(phi, axis=0),
-                V.reshape(phi.shape[1:]) 
+                self.sim.V.reshape(phi.shape[1:]) 
             ], axis=-1)
         self.sim_steps = cp.append(self.sim_steps, step, axis=0)
 
@@ -27,9 +25,9 @@ class SchroModel:
     
     
     def predict(self, phi, n_samp):
-        ev, V = self.e_field(phi, n_samp)
-        self.add_step(phi, ev, V)
+        self.sim.e_field(phi, n_samp)
+        self.add_step(phi)
 
-        pred = self.model.predict(self.sim_steps)[cp.newaxis, :, :, :, 0] 
+        pred = self.model.predict(self.sim_steps)[:, :, :, 0] 
         self.clear_steps()
         return pred

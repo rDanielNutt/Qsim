@@ -28,4 +28,4 @@ sim.simulate(dims=(5,5), dau=1e-2, steps=500, time_step=1,
             ev_samp_rate='full', method='fft', save_rate=1)
 
 
-sim.animate(surface_plot=True)
+sim.animate(surface_plot=False)
