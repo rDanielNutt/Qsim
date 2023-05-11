@@ -292,7 +292,7 @@ class SchroSim:
 
         for i in range(1, steps+1):
             if train_model:
-                model.add_step(phi, self.ev, self.V)
+                model.add_step(phi)
 
                 if (i % train_model == 0) or (i == steps):
                     loss = model.train(epochs=5)
