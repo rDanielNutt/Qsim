@@ -11,7 +11,7 @@ from qsim.models import SchroModel
 
 class SchroSim:
 
-    def __init__(self, *, reduced_h=1, q_electron=-1, q_proton=1, m_electron=1, proton_width=0.04, vacuum_perm=1):
+    def __init__(self, *, reduced_h=1, q_electron=-1, q_proton=1, m_electron=1, proton_width=0.04):
         self.h = reduced_h
         self.qe = q_electron
         self.qp = q_proton
@@ -31,7 +31,7 @@ class SchroSim:
         self.dt = 5e-3
         self.n_dim = 0
 
-        self.ep = vacuum_perm
+        self.ep = self.qe**2 / (self.me * 4 * np.pi * self.h**2)
         self.c = self.qe**2 / (self.ep * self.h * (1/137))
 
         self.simulation_frames = []
